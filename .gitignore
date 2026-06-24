@@ -1,0 +1,25 @@
+# Python virtual environment (used only to obtain a cmake binary)
+.venv/
+
+# CMake / build artifacts
+build/
+*.o
+*.obj
+*.so
+*.a
+*.exe
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+_deps/
+compile_commands.json
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Raw Google Benchmark dumps (we keep curated JSON under results/, raw dumps are transient)
+results/raw/
