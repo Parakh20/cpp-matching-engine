@@ -24,7 +24,7 @@ python3 -m venv .venv && .venv/bin/pip install cmake  # only needed for the cmak
 source .venv/bin/activate
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-./build/matching_engine_tests          # 300 tests (25 cases x 4 fixture instantiations x 3 engine versions), all passing
+./build/matching_engine_tests          # 336 tests (28 cases x 4 fixture instantiations x 3 engine versions), all passing
 ./build/matching_engine_benchmarks --benchmark_format=json > results/benchmark_results.json
 ```
 
@@ -33,15 +33,17 @@ GoogleTest and Google Benchmark are fetched automatically via CMake
 
 ## Results
 
-300/300 gtest cases passing (25 distinct test bodies — matching, price/time
-priority, edge cases, and order types/self-trade prevention — each run
-against V1, V2, and V3). The 300 figure is not simply 25 x 3: every one of
-the 4 `INSTANTIATE_TEST_SUITE_P` registrations against the shared
-`OrderBookTest` fixture applies to *all* 25 `TEST_P` bodies across every
-test file, not just the ones registered in the same file, so the real count
-is 25 bodies x 4 instantiations x 3 `BookKind` = 300 — a test-organization
-redundancy (no logical duplication, every one of the 300 still independently
-passes), not a bug. Core-logic line coverage (via `gcov`, Debug +
+336/336 gtest cases passing (28 distinct test bodies — matching, price/time
+priority, edge cases, and order types/self-trade prevention, including
+FOK+STP and Stop-order+STP interaction coverage added by a final
+whole-branch review — each run against V1, V2, and V3). The 336 figure is
+not simply 28 x 3: every one of the 4 `INSTANTIATE_TEST_SUITE_P`
+registrations against the shared `OrderBookTest` fixture applies to *all*
+28 `TEST_P` bodies across every test file, not just the ones registered in
+the same file, so the real count is 28 bodies x 4 instantiations x 3
+`BookKind` = 336 — a test-organization redundancy (no logical duplication,
+every one of the 336 still independently passes), not a bug. Core-logic
+line coverage (via `gcov`, Debug +
 `--coverage` build, as of the pre-order-types baseline):
 `src/naive/order_book.cpp` 93.6% (141 lines), `src/optimized/order_book.cpp`
 92.0% (163 lines), `src/engine.cpp` 85.7% (7 lines).
@@ -90,7 +92,12 @@ Benchmark numbers (this machine: 13th Gen Intel i5-13500H, Release
 - **Order types**: beyond plain Limit/Market, `Order` carries a
   `tif` (time-in-force: `TIF_GTC` default/existing-rest behavior, `TIF_IOC`
   match-then-discard, `TIF_FOK` fill-completely-or-not-at-all via a
-  non-mutating `IOrderBook::can_fill_completely` liquidity scan), a
+  non-mutating `IOrderBook::can_fill_completely` liquidity scan that also
+  excludes same-trader resting quantity so FOK can't partial-fill or trigger
+  an unwanted self-trade-prevention cancellation on an otherwise-failed
+  check — a bug the per-task reviews couldn't see since it spans the FOK
+  and STP features independently, caught by the final whole-branch review),
+  a
   `trader_id` for self-trade prevention (cancel-resting mode; `trader_id ==
   0` is the sentinel for "not participating," keeping every pre-existing
   order unaffected), and Stop/Stop-Limit support. Stop orders never enter
