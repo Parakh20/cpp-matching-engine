@@ -51,6 +51,7 @@ public:
     std::vector<Trade> add_market_order(Order* order) override;
     bool cancel_order(uint64_t order_id) override;
     bool modify_order(uint64_t order_id, int64_t new_qty) override;
+    bool can_fill_completely(const Order* order) const override;
     int64_t best_bid() const override;
     int64_t best_ask() const override;
 
@@ -170,6 +171,19 @@ std::vector<Trade> OptimizedOrderBook::match(Order* order, bool is_market) {
 
         while (order->remaining() > 0 && !level.empty()) {
             Order* maker = level.head;
+
+            if (order->trader_id != 0 && maker->trader_id == order->trader_id) {
+                // Self-trade prevention (cancel-resting mode): trader_id == 0
+                // means "not participating in STP" (the default for every
+                // pre-existing order), so this never fires unless both sides
+                // explicitly opted in with a matching nonzero trader_id.
+                level.total_qty -= maker->remaining();
+                remove_node(level, maker);
+                maker->status = STATUS_CANCELLED;
+                order_index_.erase(maker->order_id);
+                continue;
+            }
+
             const int64_t fill = std::min(order->remaining(), maker->remaining());
             maker->filled_qty += fill;
             order->filled_qty += fill;
@@ -192,11 +206,20 @@ std::vector<Trade> OptimizedOrderBook::match(Order* order, bool is_market) {
 
 std::vector<Trade> OptimizedOrderBook::add_limit_order(Order* order) {
     order->status = STATUS_OPEN;
+
+    if (order->tif == TIF_FOK && !can_fill_completely(order)) {
+        return {};  // Fill-Or-Kill: cannot fill in full, no trades, no mutation.
+    }
+
     std::vector<Trade> trades = match(order, /*is_market=*/false);
 
     if (order->remaining() > 0) {
         order->status = (order->filled_qty > 0) ? STATUS_PARTIAL : STATUS_OPEN;
-        rest(order);
+        if (order->tif == TIF_GTC) {
+            rest(order);
+        }
+        // TIF_IOC (and the FOK safety-net above) discard any remainder
+        // instead of resting it.
     } else {
         order->status = STATUS_FILLED;
     }
@@ -293,6 +316,34 @@ int64_t OptimizedOrderBook::best_bid() const {
 
 int64_t OptimizedOrderBook::best_ask() const {
     return best_ask_idx_ == -1 ? NO_PRICE : min_price_ + best_ask_idx_ * tick_;
+}
+
+bool OptimizedOrderBook::can_fill_completely(const Order* order) const {
+    if (order->type != TYPE_LIMIT) return false;  // FOK only defined for limit orders
+    const bool buying = (order->side == SIDE_BUY);
+    const std::vector<Level>& opp_levels = buying ? ask_levels_ : bid_levels_;
+    const int64_t opp_best = buying ? best_ask_idx_ : best_bid_idx_;
+    const int64_t needed = order->remaining();
+    int64_t available = 0;
+
+    if (opp_best == -1) return false;
+
+    if (buying) {
+        for (int64_t i = opp_best; static_cast<size_t>(i) < opp_levels.size(); ++i) {
+            const int64_t level_price = min_price_ + i * tick_;
+            if (level_price > order->price) break;  // no longer crosses
+            available += opp_levels[static_cast<size_t>(i)].total_qty;
+            if (available >= needed) return true;
+        }
+    } else {
+        for (int64_t i = opp_best; i >= 0; --i) {
+            const int64_t level_price = min_price_ + i * tick_;
+            if (level_price < order->price) break;  // no longer crosses
+            available += opp_levels[static_cast<size_t>(i)].total_qty;
+            if (available >= needed) return true;
+        }
+    }
+    return available >= needed;
 }
 
 // Factory hook used by engine.cpp. Serves both BookKind::Optimized (V2) and
