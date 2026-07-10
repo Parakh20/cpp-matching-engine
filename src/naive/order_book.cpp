@@ -133,12 +133,24 @@ bool NaiveOrderBook::can_fill_completely(const Order* order) const {
     const int64_t needed = order->remaining();
     int64_t available = 0;
 
+    // Same-trader resting liquidity is excluded (when order->trader_id != 0):
+    // match() will self-trade-prevention-cancel it rather than trade against
+    // it, so counting it here would let an FOK order pass this check and then
+    // partial-fill (or trigger an unwanted STP cancellation on failure) once
+    // the real match() runs.
+    auto live_and_not_self = [order](const Slot& s) {
+        return s.order->trader_id == 0 || order->trader_id == 0 ||
+               s.order->trader_id != order->trader_id;
+    };
+
     if (buying) {
         for (auto it = opp.begin(); it != opp.end(); ++it) {
             if (it->first > order->price) break;  // no longer crosses
             std::queue<Slot> copy = it->second;
             while (!copy.empty()) {
-                if (slot_live(copy.front())) available += copy.front().order->remaining();
+                if (slot_live(copy.front()) && live_and_not_self(copy.front())) {
+                    available += copy.front().order->remaining();
+                }
                 copy.pop();
             }
             if (available >= needed) return true;
@@ -148,7 +160,9 @@ bool NaiveOrderBook::can_fill_completely(const Order* order) const {
             if (it->first < order->price) break;  // no longer crosses
             std::queue<Slot> copy = it->second;
             while (!copy.empty()) {
-                if (slot_live(copy.front())) available += copy.front().order->remaining();
+                if (slot_live(copy.front()) && live_and_not_self(copy.front())) {
+                    available += copy.front().order->remaining();
+                }
                 copy.pop();
             }
             if (available >= needed) return true;
@@ -200,6 +214,7 @@ std::vector<Trade> NaiveOrderBook::match(Order* order, bool is_market) {
                 maker->status = STATUS_CANCELLED;
                 ++epoch_[maker->order_id];
                 order_index_.erase(maker->order_id);
+                epoch_.erase(maker->order_id);
                 q.pop();
                 continue;
             }

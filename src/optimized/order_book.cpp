@@ -328,18 +328,33 @@ bool OptimizedOrderBook::can_fill_completely(const Order* order) const {
 
     if (opp_best == -1) return false;
 
+    // Fast path: level.total_qty is a ready-made aggregate. But it can't
+    // distinguish trader_id, and match() will self-trade-prevention-cancel
+    // any same-trader resting order instead of trading against it -- so when
+    // STP could actually apply (order->trader_id != 0), fall back to walking
+    // the level's intrusive list and excluding that trader's own quantity,
+    // keeping this check consistent with what match() will really do.
+    auto level_available = [order](const Level& level) -> int64_t {
+        if (order->trader_id == 0) return level.total_qty;
+        int64_t sum = 0;
+        for (Order* o = level.head; o != nullptr; o = o->next) {
+            if (o->trader_id != order->trader_id) sum += o->remaining();
+        }
+        return sum;
+    };
+
     if (buying) {
         for (int64_t i = opp_best; static_cast<size_t>(i) < opp_levels.size(); ++i) {
             const int64_t level_price = min_price_ + i * tick_;
             if (level_price > order->price) break;  // no longer crosses
-            available += opp_levels[static_cast<size_t>(i)].total_qty;
+            available += level_available(opp_levels[static_cast<size_t>(i)]);
             if (available >= needed) return true;
         }
     } else {
         for (int64_t i = opp_best; i >= 0; --i) {
             const int64_t level_price = min_price_ + i * tick_;
             if (level_price < order->price) break;  // no longer crosses
-            available += opp_levels[static_cast<size_t>(i)].total_qty;
+            available += level_available(opp_levels[static_cast<size_t>(i)]);
             if (available >= needed) return true;
         }
     }

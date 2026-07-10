@@ -149,6 +149,62 @@ TEST_P(OrderBookTest, CascadingStopsTriggerEachOther) {
     EXPECT_EQ(buy_stop_2->filled_qty, 0);
 }
 
+TEST_P(OrderBookTest, FOKWithSTPExcludesOwnLiquidityFromFillCheck) {
+    Order* ask_self = mk(SIDE_ASK, TYPE_LIMIT, 3, 10000, /*trader_id=*/42);
+    Order* ask_other = mk(SIDE_ASK, TYPE_LIMIT, 3, 10000, /*trader_id=*/7);
+    engine_->book().add_limit_order(ask_self);
+    engine_->book().add_limit_order(ask_other);
+
+    // Needs 5; only 3 of the 6 resting qty is from a DIFFERENT trader, so
+    // this must fail safely -- not partial-fill against ask_other and not
+    // cancel ask_self as an unwanted side effect of a failed FOK check.
+    Order* bid = mk(SIDE_BUY, TYPE_LIMIT, 5, 10000, /*trader_id=*/42, TIF_FOK);
+    auto trades = engine_->book().add_limit_order(bid);
+
+    EXPECT_TRUE(trades.empty());
+    EXPECT_EQ(bid->filled_qty, 0);
+    EXPECT_EQ(ask_self->status, STATUS_OPEN);   // untouched, NOT cancelled
+    EXPECT_EQ(ask_other->status, STATUS_OPEN);  // untouched, NOT filled
+    EXPECT_EQ(engine_->book().best_ask(), 10000);
+}
+
+TEST_P(OrderBookTest, IOCWithSTPCancelsSelfAndDiscardsRemainder) {
+    Order* ask_self = mk(SIDE_ASK, TYPE_LIMIT, 3, 10000, /*trader_id=*/42);
+    engine_->book().add_limit_order(ask_self);
+
+    Order* bid = mk(SIDE_BUY, TYPE_LIMIT, 5, 10000, /*trader_id=*/42, TIF_IOC);
+    auto trades = engine_->book().add_limit_order(bid);
+
+    EXPECT_TRUE(trades.empty());                   // no self-trade
+    EXPECT_EQ(ask_self->status, STATUS_CANCELLED);  // STP still fires during the real match
+    EXPECT_EQ(bid->filled_qty, 0);
+    EXPECT_EQ(engine_->book().best_ask(), NO_PRICE);
+    EXPECT_EQ(engine_->book().best_bid(), NO_PRICE);  // IOC: unfilled remainder discarded, not resting
+}
+
+TEST_P(OrderBookTest, StopTriggeredMarketOrderHonorsSelfTradePrevention) {
+    Order* ask_self = mk(SIDE_ASK, TYPE_LIMIT, 5, 10100, /*trader_id=*/99);
+    Order* ask_other = mk(SIDE_ASK, TYPE_LIMIT, 5, 10100, /*trader_id=*/7);
+    engine_->submit_order(ask_self);
+    engine_->submit_order(ask_other);
+
+    Order* buy_stop = mk(SIDE_BUY, TYPE_STOP, 5, /*price=*/0, /*trader_id=*/99,
+                          TIF_GTC, /*stop_price=*/10050);
+    engine_->submit_order(buy_stop);
+
+    Order* ask_trigger = mk(SIDE_ASK, TYPE_LIMIT, 1, 10060);
+    engine_->submit_order(ask_trigger);
+    Order* bid_trigger = mk(SIDE_BUY, TYPE_LIMIT, 1, 10060);
+    auto trades = engine_->submit_order(bid_trigger);
+
+    ASSERT_EQ(trades.size(), 2u);
+    EXPECT_EQ(trades[0].price, 10060);
+    EXPECT_EQ(trades[1].price, 10100);
+    EXPECT_EQ(trades[1].maker_order_id, ask_other->order_id);  // same-trader ask skipped via STP
+    EXPECT_EQ(ask_self->status, STATUS_CANCELLED);
+    EXPECT_EQ(buy_stop->status, STATUS_FILLED);
+}
+
 INSTANTIATE_TEST_SUITE_P(OrderTypeTests, OrderBookTest,
                          ::testing::Values(BookKind::Naive, BookKind::Optimized,
                                             BookKind::OptimizedArena));

@@ -49,10 +49,13 @@ public:
     // completely against current opposite-side liquidity (honoring its limit
     // price), leaving no resting remainder? Used to implement Fill-Or-Kill
     // (TIF_FOK) without ever partially mutating book state on failure. Returns
-    // false for non-TYPE_LIMIT orders (FOK only applies to limit orders). Does
-    // NOT account for self-trade prevention -- a same-trader resting order
-    // still counts as available liquidity for this check; STP's cancellation
-    // of that order happens only during the real, mutating match.
+    // false for non-TYPE_LIMIT orders (FOK only applies to limit orders).
+    // Accounts for self-trade prevention: same-trader resting liquidity
+    // (order->trader_id != 0 and matching a resting order's trader_id) is
+    // excluded from the count, since the real match() would cancel that
+    // liquidity via STP rather than trade against it -- counting it here
+    // would let this check pass and then have the real match() partial-fill
+    // or fail-with-a-side-effect instead of failing cleanly.
     virtual bool can_fill_completely(const Order* order) const = 0;
 
     // Best (highest) resting bid price, or NO_PRICE if no bids.
