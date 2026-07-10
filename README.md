@@ -24,7 +24,7 @@ python3 -m venv .venv && .venv/bin/pip install cmake  # only needed for the cmak
 source .venv/bin/activate
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-./build/matching_engine_tests          # 153 tests (51 cases x 3 engine versions), all passing
+./build/matching_engine_tests          # 300 tests (25 cases x 4 fixture instantiations x 3 engine versions), all passing
 ./build/matching_engine_benchmarks --benchmark_format=json > results/benchmark_results.json
 ```
 
@@ -33,11 +33,18 @@ GoogleTest and Google Benchmark are fetched automatically via CMake
 
 ## Results
 
-153/153 gtest cases passing (17 distinct test bodies — matching, price/time
-priority, edge cases — each run against V1, V2, and V3). Core-logic line
-coverage (via `gcov`, Debug + `--coverage` build): `src/naive/order_book.cpp`
-93.6% (141 lines), `src/optimized/order_book.cpp` 92.0% (163 lines),
-`src/engine.cpp` 85.7% (7 lines).
+300/300 gtest cases passing (25 distinct test bodies — matching, price/time
+priority, edge cases, and order types/self-trade prevention — each run
+against V1, V2, and V3). The 300 figure is not simply 25 x 3: every one of
+the 4 `INSTANTIATE_TEST_SUITE_P` registrations against the shared
+`OrderBookTest` fixture applies to *all* 25 `TEST_P` bodies across every
+test file, not just the ones registered in the same file, so the real count
+is 25 bodies x 4 instantiations x 3 `BookKind` = 300 — a test-organization
+redundancy (no logical duplication, every one of the 300 still independently
+passes), not a bug. Core-logic line coverage (via `gcov`, Debug +
+`--coverage` build, as of the pre-order-types baseline):
+`src/naive/order_book.cpp` 93.6% (141 lines), `src/optimized/order_book.cpp`
+92.0% (163 lines), `src/engine.cpp` 85.7% (7 lines).
 
 Benchmark numbers (this machine: 13th Gen Intel i5-13500H, Release
 `-O2 -DNDEBUG`; full sweep in `results/benchmark_results.json`, narrative in
@@ -80,6 +87,17 @@ Benchmark numbers (this machine: 13th Gen Intel i5-13500H, Release
   runs against V1, V2, and V3 automatically.
 - `benchmark/` — Google Benchmark, `BENCHMARK_CAPTURE`'d per engine version
   and allocator, at N in {1,000 / 10,000 / 100,000}.
+- **Order types**: beyond plain Limit/Market, `Order` carries a
+  `tif` (time-in-force: `TIF_GTC` default/existing-rest behavior, `TIF_IOC`
+  match-then-discard, `TIF_FOK` fill-completely-or-not-at-all via a
+  non-mutating `IOrderBook::can_fill_completely` liquidity scan), a
+  `trader_id` for self-trade prevention (cancel-resting mode; `trader_id ==
+  0` is the sentinel for "not participating," keeping every pre-existing
+  order unaffected), and Stop/Stop-Limit support. Stop orders never enter
+  V1/V2/V3's live book at all — `Engine::submit_order` holds them dormant
+  (FIFO per side) until a trade price crosses their `stop_price`, then
+  converts them to Market/Limit and re-dispatches, looping to handle
+  cascading triggers. Design: `docs/superpowers/specs/2026-07-10-extended-order-types-design.md`.
 
 ## What's NOT done
 
