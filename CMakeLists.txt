@@ -34,6 +34,7 @@ add_executable(matching_engine_tests
   tests/test_matching.cpp
   tests/test_priorities.cpp
   tests/test_edge_cases.cpp
+  tests/test_order_types.cpp
 )
 target_link_libraries(matching_engine_tests PRIVATE matching_engine_core gtest_main)
 target_compile_options(matching_engine_tests PRIVATE -O0 -g)
