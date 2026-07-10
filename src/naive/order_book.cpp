@@ -41,6 +41,7 @@ public:
     std::vector<Trade> add_market_order(Order* order) override;
     bool cancel_order(uint64_t order_id) override;
     bool modify_order(uint64_t order_id, int64_t new_qty) override;
+    bool can_fill_completely(const Order* order) const override;
     int64_t best_bid() const override;
     int64_t best_ask() const override;
 
@@ -125,6 +126,37 @@ int64_t NaiveOrderBook::best_ask() const {
     return NO_PRICE;
 }
 
+bool NaiveOrderBook::can_fill_completely(const Order* order) const {
+    if (order->type != TYPE_LIMIT) return false;  // FOK only defined for limit orders
+    const bool buying = (order->side == SIDE_BUY);
+    const std::map<int64_t, std::queue<Slot>>& opp = buying ? asks_ : bids_;
+    const int64_t needed = order->remaining();
+    int64_t available = 0;
+
+    if (buying) {
+        for (auto it = opp.begin(); it != opp.end(); ++it) {
+            if (it->first > order->price) break;  // no longer crosses
+            std::queue<Slot> copy = it->second;
+            while (!copy.empty()) {
+                if (slot_live(copy.front())) available += copy.front().order->remaining();
+                copy.pop();
+            }
+            if (available >= needed) return true;
+        }
+    } else {
+        for (auto it = opp.rbegin(); it != opp.rend(); ++it) {
+            if (it->first < order->price) break;  // no longer crosses
+            std::queue<Slot> copy = it->second;
+            while (!copy.empty()) {
+                if (slot_live(copy.front())) available += copy.front().order->remaining();
+                copy.pop();
+            }
+            if (available >= needed) return true;
+        }
+    }
+    return available >= needed;
+}
+
 void NaiveOrderBook::rest(Order* order) {
     const bool buying = (order->side == SIDE_BUY);
     std::map<int64_t, std::queue<Slot>>& own = buying ? bids_ : asks_;
@@ -159,6 +191,19 @@ std::vector<Trade> NaiveOrderBook::match(Order* order, bool is_market) {
                 continue;
             }
             Order* maker = front.order;
+
+            if (order->trader_id != 0 && maker->trader_id == order->trader_id) {
+                // Self-trade prevention (cancel-resting mode): trader_id == 0
+                // means "not participating in STP" (the default for every
+                // pre-existing order), so this never fires unless both sides
+                // explicitly opted in with a matching nonzero trader_id.
+                maker->status = STATUS_CANCELLED;
+                ++epoch_[maker->order_id];
+                order_index_.erase(maker->order_id);
+                q.pop();
+                continue;
+            }
+
             const int64_t fill = std::min(order->remaining(), maker->remaining());
             maker->filled_qty += fill;
             order->filled_qty += fill;
@@ -183,11 +228,20 @@ std::vector<Trade> NaiveOrderBook::match(Order* order, bool is_market) {
 
 std::vector<Trade> NaiveOrderBook::add_limit_order(Order* order) {
     order->status = STATUS_OPEN;
+
+    if (order->tif == TIF_FOK && !can_fill_completely(order)) {
+        return {};  // Fill-Or-Kill: cannot fill in full, no trades, no mutation.
+    }
+
     std::vector<Trade> trades = match(order, /*is_market=*/false);
 
     if (order->remaining() > 0) {
         order->status = (order->filled_qty > 0) ? STATUS_PARTIAL : STATUS_OPEN;
-        rest(order);
+        if (order->tif == TIF_GTC) {
+            rest(order);
+        }
+        // TIF_IOC (and the FOK safety-net above) discard any remainder
+        // instead of resting it.
     } else {
         order->status = STATUS_FILLED;
     }
