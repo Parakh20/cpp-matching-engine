@@ -45,6 +45,16 @@ public:
     // relative to already-filled amount. Returns false if the order is unknown.
     virtual bool modify_order(uint64_t order_id, int64_t new_qty) = 0;
 
+    // Non-mutating check: would submitting `order` as a limit order fill it
+    // completely against current opposite-side liquidity (honoring its limit
+    // price), leaving no resting remainder? Used to implement Fill-Or-Kill
+    // (TIF_FOK) without ever partially mutating book state on failure. Returns
+    // false for non-TYPE_LIMIT orders (FOK only applies to limit orders). Does
+    // NOT account for self-trade prevention -- a same-trader resting order
+    // still counts as available liquidity for this check; STP's cancellation
+    // of that order happens only during the real, mutating match.
+    virtual bool can_fill_completely(const Order* order) const = 0;
+
     // Best (highest) resting bid price, or NO_PRICE if no bids.
     virtual int64_t best_bid() const = 0;
 
