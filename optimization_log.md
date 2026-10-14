@@ -3,8 +3,8 @@
 Real numbers from `results/benchmark_results.json`, produced by
 `./build/matching_engine_benchmarks --benchmark_format=json` on this
 machine (13th Gen Intel i5-13500H, 16 logical CPUs, Release build,
-`-O2 -DNDEBUG`). All three versions pass the identical 51-case-per-version
-gtest suite (see `README.md`) — these are genuine apples-to-apples
+`-O2 -DNDEBUG`, recorded 2026-07-06). All three versions pass the identical
+GoogleTest suite (see `README.md`) — these are genuine apples-to-apples
 comparisons, not cherry-picked.
 
 ## Baseline: V1 (naive, `std::map<price, std::queue<Order*>>`)
