@@ -1,6 +1,5 @@
 # Extended Order Types + Self-Trade Prevention Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add IOC/FOK/GTC time-in-force, Stop/Stop-Limit order types, and cancel-resting self-trade prevention to all three interchangeable order-book engines (V1 naive, V2/V3 optimized), without changing behavior for any existing default (GTC, non-STP, non-stop) order.
 
@@ -15,7 +14,7 @@
 - `Order::tif` defaults to `TIF_GTC`, reproducing today's exact resting behavior for any order that doesn't opt into IOC/FOK.
 - Stop/Stop-Limit orders are handled entirely by `Engine`, never by `IOrderBook` implementations — V1 and V2/V3 matching cores never see `TYPE_STOP`/`TYPE_STOP_LIMIT` order types.
 - New tests are added as `TEST_P` bodies in the existing shared `OrderBookTest` fixture pattern (`tests/test_helpers.hpp`), each run against all 3 `BookKind` values via `INSTANTIATE_TEST_SUITE_P`.
-- Full spec: `docs/superpowers/specs/2026-07-10-extended-order-types-design.md`.
+- Full spec: `docs/design/2026-07-10-extended-order-types-design.md`.
 
 ---
 
